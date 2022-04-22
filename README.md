@@ -2,7 +2,7 @@
 
 [Fluentd](https://fluentd.org/) input plugin to do something.
 
-TODO: write description for you plugin.
+only pull subscription
 
 ## Installation
 
