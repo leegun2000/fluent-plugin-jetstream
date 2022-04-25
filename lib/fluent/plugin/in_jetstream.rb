@@ -6,8 +6,6 @@ module Fluent
     class JetstreamInput < Fluent::Plugin::Input
       Fluent::Plugin.register_input("jetstream", self)
 
-      helpers :thread
-
       config_param :server, :string, :default => 'localhost:4222',
                    :desc => "NATS streaming server host:port"
       config_param :durable_name, :string, :default => nil,
@@ -23,14 +21,12 @@ module Fluent
 
       config_param :fetch_size, :integer, :default => 1,
                    :desc => "The number of request pull fetch size"
-      config_param :max_reconnect_attempts, :integer, :default => 10,
+      config_param :max_reconnect_attempts, :integer, :default => -1,
                    :desc => "The max number of reconnect tries"
       config_param :reconnect_time_wait, :integer, :default => 5,
                    :desc => "The number of seconds to wait between reconnect tries"
-      config_param :max_consume_interval, :integer, :default => 120,
-                   :desc => "max consume interval time"
 
-      config_param :tag, :string, :default => 'fluentd',
+      config_param :tag, :string, :default => 'nats.jetstream',
                    :desc => "tag"
 
       def configure(conf)
@@ -53,21 +49,34 @@ module Fluent
         super
         @running = true
         @nc = NATS.connect(@cluster_opts)
-
-        #thread_create(:jetstream_input_main, &method(:run))
-        @thread = Thread.new(&method(:run))
-
         log.info "listening nats on #{@cluster_opts[:servers]}/#{@subject}/#{@consumer}/#{@fetch_size}"
+
+        @nc.on_error do |e|
+          log.error "nats Error: #{e}"
+        end
+
+        @nc.on_reconnect do
+          log.info "nats Reconnected to server at #{@nc.connected_server}"
+        end
+
+        @nc.on_disconnect do
+          log.info "nats Disconnected!"
+        end
+
+        @nc.on_close do
+          log.info "Connection to nats closed"
+        end
+
+        @thread = Thread.new(&method(:run))
       end
 
       def shutdown
         @running = false
-
         @thread.join
-        @nc.flush(0.5)
+
+        @nc.flush
         @nc.drain if @nc
         @nc.close if @nc
-
         super
       end
 
@@ -81,7 +90,7 @@ module Fluent
               begin
                 message = JSON.parse(msg.data)
               rescue  JSON::ParserError => e
-                log.error "Failed parsing JSON #{e.inspect}.  Passing as a normal string"
+                log.error "Failed parsing JSON #{e.inspect}. Passing as a normal string"
                 message = msg
               end
               msg.ack
@@ -91,7 +100,7 @@ module Fluent
           rescue NATS::Timeout => e
             log.debug "nats: request timed out: #{e}"
             #retry
-          rescue NATS::Error => e
+          rescue => e
             log.error "#{e}"
           end
         end
