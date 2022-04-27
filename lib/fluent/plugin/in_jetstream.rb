@@ -8,14 +8,15 @@ module Fluent
 
       config_param :server, :string, :default => 'localhost:4222',
                    :desc => "NATS streaming server host:port"
-      config_param :durable_name, :string, :default => nil,
-                   :desc => "durable name"
-      config_param :queue, :string, :default => nil,
-                   :desc => "queue name"
-      config_param :consumer, :string, :default => nil,
-                   :desc => "consumer name"
+
+      config_param :stream, :string, :default => nil,
+                   :desc => "stream name"
       config_param :subject, :string, :default => nil,
                    :desc => "subject name"
+      config_param :consumer, :string, :default => nil,
+                   :desc => "consumer name"
+      config_param :durable, :string, :default => nil,
+                   :desc => "durable name"
       config_param :start_at, :string, :default => "deliver_all_available",
                    :desc => "start at"
 
@@ -25,6 +26,10 @@ module Fluent
                    :desc => "The max number of reconnect tries"
       config_param :reconnect_time_wait, :integer, :default => 5,
                    :desc => "The number of seconds to wait between reconnect tries"
+      config_param :ping_interval, :integer, :default => 10,
+                   :desc => "ping interval"
+      config_param :max_outstanding_pings, :integer, :default => 5,
+                   :desc => "max out standing pings"
 
       config_param :tag, :string, :default => 'nats.jetstream',
                    :desc => "tag"
@@ -41,7 +46,9 @@ module Fluent
         @cluster_opts = {
           servers: servers,
           reconnect_time_wait: @reconnect_time_wait,
-          max_reconnect_attempts: @max_reconnect_attempts
+          max_reconnect_attempts: @max_reconnect_attempts,
+          ping_interval: @ping_interval,
+          max_outstanding_pings: @max_outstanding_pings
         }
       end
 
@@ -53,6 +60,24 @@ module Fluent
 
         @nc.on_error do |e|
           log.error "nats Error: #{e}"
+
+          if e.is_a?(NATS::IO::SlowConsumer)
+            log.error "nats Slow Caputer"
+            begin
+              @psub.unsubscribe
+            rescue NATS::Timeout => e
+              log.warn "nats unsubscribe Timeout"
+              retry
+            end
+
+            begin
+              @psub = @js.pull_subscribe(@subject, @consumer, @sub_opts) if @psub.closed
+            rescue NATS::Timeout => e
+              log.warn "nats pull_subscribe Timeout"
+              retry
+            end
+          end
+
         end
 
         @nc.on_reconnect do
@@ -66,6 +91,13 @@ module Fluent
         @nc.on_close do
           log.info "Connection to nats closed"
         end
+
+        @js = @nc.jetstream
+        @sub_opts = {
+          stream: @stream,
+          consumer: @consumer
+        }
+        @psub = @js.pull_subscribe(@subject, @durable, @sub_opts)
 
         @thread = Thread.new(&method(:run))
       end
@@ -81,11 +113,12 @@ module Fluent
       end
 
       def run
-        js = @nc.jetstream
-        psub = js.pull_subscribe(@subject, @consumer)
         while @running
+          sleep 0.1
           begin
-            psub.fetch(@fetch_size).each do |msg|
+            @psub = @js.pull_subscribe(@subject, @durable, @sub_opts) if @psub.closed
+            
+            @psub.fetch(@fetch_size).each do |msg|
               tag = "#{@tag}"
               begin
                 message = JSON.parse(msg.data)
