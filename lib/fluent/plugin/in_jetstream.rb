@@ -62,19 +62,12 @@ module Fluent
           log.error "nats Error: #{e}"
 
           if e.is_a?(NATS::IO::SlowConsumer)
-            log.error "nats Slow Caputer"
+            log.error "nats SlowConsumer Captuer"
             begin
               @psub.unsubscribe
             rescue NATS::Timeout => e
               log.warn "nats unsubscribe Timeout"
-              retry
-            end
-
-            begin
-              @psub = @js.pull_subscribe(@subject, @consumer, @sub_opts) if @psub.closed
-            rescue NATS::Timeout => e
-              log.warn "nats pull_subscribe Timeout"
-              retry
+              # retry
             end
           end
 
@@ -117,7 +110,7 @@ module Fluent
           sleep 0.1
           begin
             @psub = @js.pull_subscribe(@subject, @durable, @sub_opts) if @psub.closed
-            
+
             @psub.fetch(@fetch_size).each do |msg|
               tag = "#{@tag}"
               begin
