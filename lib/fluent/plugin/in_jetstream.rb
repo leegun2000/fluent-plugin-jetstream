@@ -9,14 +9,15 @@ module Fluent
       config_param :server, :string, :default => 'localhost:4222',
                    :desc => "NATS streaming server host:port"
 
+      config_param :subject, :string,
+                   :desc => "subject name"
+      config_param :durable, :string,
+                   :desc => "durable name"
+
       config_param :stream, :string, :default => nil,
                    :desc => "stream name"
-      config_param :subject, :string, :default => nil,
-                   :desc => "subject name"
       config_param :consumer, :string, :default => nil,
                    :desc => "consumer name"
-      config_param :durable, :string, :default => nil,
-                   :desc => "durable name"
       config_param :start_at, :string, :default => "deliver_all_available",
                    :desc => "start at"
 
@@ -31,8 +32,8 @@ module Fluent
       config_param :max_outstanding_pings, :integer, :default => 5,
                    :desc => "max out standing pings"
 
-      config_param :tag, :string, :default => 'nats.jetstream',
-                   :desc => "tag"
+      config_param :tag, :string, :default => nil,
+                   :desc => "default subject name"
 
       def configure(conf)
         super
@@ -112,7 +113,12 @@ module Fluent
             @psub = @js.pull_subscribe(@subject, @durable, @sub_opts) if @psub.closed
 
             @psub.fetch(@fetch_size).each do |msg|
-              tag = "#{@tag}"
+              if @tag
+                tag = "#{@tag}"
+              else 
+                tag = "#{msg.subject}"  
+              end
+
               begin
                 message = JSON.parse(msg.data)
               rescue  JSON::ParserError => e
